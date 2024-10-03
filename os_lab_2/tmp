@@ -1,0 +1,59 @@
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <unistd.h>
+
+int main(void)
+{
+    int    wstatus;
+    pid_t chpids[2], w;
+
+    for (size_t i = 0; i < 2; ++i)
+    {
+        if ((chpids[i] = fork()) == -1)
+        {
+            perror("Can not fork.\n");
+            exit(EXIT_FAILURE);
+        }
+        else if (chpids[i] == 0)
+        {
+            if(i==1)
+                while(1) {
+                    printf("-");
+                }
+            printf("Child process: PID = %d, PPID = %d, GROUP = %d\n",
+                   getpid(), getppid(), getpgrp());
+
+            
+            exit(EXIT_SUCCESS);
+        }
+        else
+        {
+            printf("Parent process: PID = %d, GROUP = %d, chpids[i] = %d\n",
+                   getpid(), getpgrp(), chpids[i]);
+
+            w = waitpid(chpids[i], &wstatus, WNOHANG); // WNOHANG return immediately if no child has exited.
+            if (w == -1) {
+                perror("waitpid");
+                exit(EXIT_FAILURE);
+            }
+
+            if (WIFEXITED(wstatus)) {
+                printf("exited, status=%d\n", WEXITSTATUS(wstatus));
+            } else if (WIFSIGNALED(wstatus)) {
+                printf("killed by signal %d\n", WTERMSIG(wstatus));
+            } else if (WIFSTOPPED(wstatus)) {
+                printf("stopped by signal %d\n", WSTOPSIG(wstatus));
+            } else if (WIFCONTINUED(wstatus)) {
+                printf("continued\n");
+            }
+                
+            
+        }
+    }
+
+
+    return 0;
+}
