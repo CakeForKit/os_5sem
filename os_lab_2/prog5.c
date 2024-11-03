@@ -5,8 +5,15 @@
 #include <sys/wait.h>
 #include <unistd.h>
 #include <string.h>
+#include <signal.h>
 
-/* Ожидание процессом - предком завершения потомков. Системный вызов wait(). */
+int flag = 0;
+
+void handler(int sig_numb)
+{
+    flag = 1;
+    printf(" Signal handler %d installed.\n", sig_numb);
+}
 
 int main(void)
 {
@@ -20,16 +27,27 @@ int main(void)
         exit(EXIT_FAILURE);
     }
 
+    if (signal(SIGINT, handler) == SIG_ERR) {
+        perror("Ошибка signal");
+        exit(EXIT_FAILURE);
+    }
+    printf("Push Ctrl+C, to send message from childs.\n");
+    sleep(2);
+
     for (size_t i = 0; i < 2; ++i) {
         if ((chpids[i] = fork()) == -1) {
             perror("Can not fork.\n");
             exit(EXIT_FAILURE);
         }
         else if (chpids[i] == 0) {
-            printf("PID = %d write: '%s'\n", getpid(), texts[i]);
-            close(pipefd[0]);                               
-            write(pipefd[1], texts[i], strlen(texts[i]));
-            close(pipefd[1]);                               
+            
+            if (flag) {
+                printf("PID = %d write: '%s'\n", getpid(), texts[i]);
+                close(pipefd[0]);                               
+                write(pipefd[1], texts[i], strlen(texts[i])); 
+            } else 
+                printf("PID = %d no signal \n", getpid());
+                                         
             exit(EXIT_SUCCESS);
         }
     }
@@ -54,13 +72,12 @@ int main(void)
     for (size_t i = 0; i < 2; ++i) {
         close(pipefd[1]);          
         read(pipefd[0], &buf, strlen(texts[i]));
-        printf("Parant received message from PID = %d: %s\n", chpids[i], buf);
+        printf("Received message from PID = %d: %s\n", chpids[i], buf);
         buf[0] = 0;
     }
     close(pipefd[1]); 
     read(pipefd[0], buf, 1);
-    printf("received message: '%s'\n", buf);
-    close(pipefd[0]);  
+    printf("Received message: %s\n", buf);
     
     exit(EXIT_SUCCESS);
 }
