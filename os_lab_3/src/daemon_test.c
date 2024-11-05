@@ -7,7 +7,7 @@
 
 #define LOCKFILE "/var/run/daemon.pid"
 #define CONFFILE "/etc/daemon.conf"
-#define LOCKMODE (S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH)   
+#define LOCKMODE (S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH)    // read_user, write_user, read_group, read_others
 
 
 // Инициализация процесса-демона
@@ -18,28 +18,37 @@ void daemonize(const char *cmd)
     struct rlimit       rl;
     struct sigaction    sa;
 
-    // Сброс маску создания файлов в значение 0
+    /*
+     * Сброс маску создания файлов в значение 0
+     */
     umask(0);
 
-    // Получить максимально возможный номер дескриптора файла.
+    /*
+     * Получить максимально возможный номер дескриптора файла.
+     */
     if (getrlimit(RLIMIT_NOFILE, &rl) == -1)
         err_quit("%s: невозможно получить максимальный номер дескриптора ", cmd);
 
-    
-    // Стать лидером нового сеанса, чтобы утратить управляющий терминал
+    /*
+     * Стать лидером нового сеанса, чтобы утратить управляющий терминал.
+     */
     if ((pid = fork()) == -1)
         err_quit("%s: ошибка вызова функции fork", cmd);
-    else if (pid != 0)  // родительский процесс 
+    else if (pid != 0) /* родительский процесс */
         exit(0);
-    
-    // Создаем новый сеанс 
+
+    /*
+     * Создаем новый сеанс
+     */
     if (setsid() == -1)
     {
         perror("Ошибка setsid");
         exit(EXIT_FAILURE);
     }
 
-    // Обеспечить невозможность обретения управляющего терминала в будущем. 
+    /*
+     * Обеспечить невозможность обретения управляющего терминала в будущем.
+     */
     sa.sa_handler = SIG_IGN;
     sigemptyset(&sa.sa_mask);   // количество различных сигналов может превышать количество бит в целочисленном типе, поэтому в большинстве случаев нельзя использовать тип int
     sa.sa_flags = 0;
@@ -48,26 +57,34 @@ void daemonize(const char *cmd)
     // этого в линукс делать не надо
     // if ((pid = fork()) < 0)
     //     err_quit("%s: ошибка вызова функции fork", cmd);
-    // else if (pid != 0)  родительский процесс 
+    // else if (pid != 0) /* родительский процесс */
     //     exit(0);
     
-    // Назначить корневой каталог текущим рабочим каталогом,
-    // чтобы впоследствии можно было отмонтировать файловую систему. 
+    /*
+     * Назначить корневой каталог текущим рабочим каталогом,
+     * чтобы впоследствии можно было отмонтировать файловую систему.
+     */
     if (chdir("/") == -1)
         err_quit("%s:  невозможно сделать текущим рабочим каталогом  /", cmd);
 
-    // Закрыть все открытые файловые дескрипторы.
+    /*
+     * Закрыть все открытые файловые дескрипторы.
+     */
     if (rl.rlim_max == RLIM_INFINITY)
         rl.rlim_max = 1024; // макс число файловых дескрипторов которые могут быть открыты
     for (i = 0; i < rl.rlim_max; i++)
         close(i);
-    
-    // Присоединить файловые дескрипторы 0, 1 и 2 к /dev/null.
+
+    /*
+     * Присоединить файловые дескрипторы 0, 1 и 2 к /dev/null.
+     */
     fd0 = open("/dev/null", O_RDWR);
     fd1 = dup(0);
     fd2 = dup(0);
 
-    // Инициализировать файл журнала.
+    /*
+     * Инициализировать файл журнала.
+     */
     openlog(cmd, LOG_CONS, LOG_DAEMON);
     if (fd0 != 0 || fd1 != 1 || fd2 != 2)
     {
@@ -165,6 +182,12 @@ void *thr_fn(void *arg)
 
     for (;;)
     {
+        /* sigwait() function suspends execution of the calling thread
+       until one of the signals specified in the signal set set becomes
+       pending(рассматриваться).  ??? For a signal to become pending, it must first be
+       blocked with sigprocmask(2)???.  The function accepts the signal
+       (removes it from the pending list of signals), and returns the
+       signal number in sig. */
         err = sigwait(mask, &signo);
         if (err != 0)
         {
@@ -202,15 +225,21 @@ int main(int argc, char *argv[])
     sigset_t mask;
 
     // cmd - имя исполняемого файла (без пути)
+    /* char *strrchr(const char *s, int c); 
+        возвращает указатель на местонахождение последнего символа равного символу c в строке s. */
     if ((cmd = strrchr(argv[0], '/')) == NULL)
         cmd = argv[0];
     else
         cmd++;
-  
-    // Перейти в режим демона.
+
+    /*
+     * Перейти в режим демона.
+     */
     daemonize(cmd);
- 
-    // Убедиться, что ранее не была запущена другая копия демона.  
+
+    /*
+     * Убедиться, что ранее не была запущена другая копия демона.
+     */
     if (already_running())
     {
         syslog(LOG_ERR, "демон уже запущен");
@@ -218,27 +247,46 @@ int main(int argc, char *argv[])
     }
 
     // до этого момента SIGHUP игнорируется
-    // Восстановить действие по умолчанию для сигнала SIGHUP и заблокировать все сигналы.
+    /*
+     * Восстановить действие по умолчанию для сигнала SIGHUP
+     * и заблокировать все сигналы.
+     */
     sa.sa_handler = SIG_DFL;
     sigemptyset(&sa.sa_mask);
     sa.sa_flags = 0;
     if (sigaction(SIGHUP, &sa, NULL) == -1)
         err_quit("%s:  невозможно восстановить действие SIG_DFL для SIGHUP");
 
-    sigfillset(&mask);         
+    /*
+    The pthread_sigmask() function is just like sigprocmask(2), with
+                        the difference that its use in multithreaded programs is
+                        explicitly specified by POSIX.1.
+    sigprocmask() is used to fetch and/or change the signal mask of
+                the calling thread.  The signal mask is the set of signals whose
+                delivery is currently blocked for the caller
+    SIG_BLOCK The set of blocked signals is the union of the current set
+              and the set argument.
+    */
+    sigfillset(&mask);          // initialize and fill a signal set
     if ((err = pthread_sigmask(SIG_BLOCK, &mask, NULL)) != 0)
         err_exit(err, "ошибка выполнения операции SIG_BLOCK");
- 
-    // Создать поток для обработки SIGHUP и SIGTERM.
+
+    /*
+     * Создать поток для обработки SIGHUP и SIGTERM.
+     */
     err = pthread_create(&tid, NULL, thr_fn, &mask);
     if (err == -1)
         err_exit(err, "can't create thread");
-     
+
+    /*
+     * Proceed with the rest of the daemon.
+     */
     while (1)
     {
         time_t cur_time = time(NULL);
         syslog(LOG_NOTICE, "Time: %s", ctime(&cur_time));
         sleep(10);
     }
+
     return 0;
 }
