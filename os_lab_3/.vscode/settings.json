@@ -4,6 +4,7 @@
         "apue.h": "c",
         "unistd.h": "c",
         "signal.h": "c",
-        "fcntl.h": "c"
+        "fcntl.h": "c",
+        "stdlib.h": "c"
     }
 }

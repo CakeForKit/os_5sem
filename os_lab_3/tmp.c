@@ -1,54 +1,43 @@
-#include <errno.h>
-#include <pthread.h>
 #include <signal.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <unistd.h>
-#include <bits/types/sigset_t.h>
-#include <bits/sigaction.h>
 
+#include <stdio.h>		/* for convenience */
+#include <stdlib.h>		/* for convenience */
+#include <stddef.h>		/* for offsetof */
+#include <string.h>		/* for convenience */
+#include <unistd.h>		/* for convenience */
 
-/* Simple error handling functions */
+#define _POSIX_C_SOURCE 200809L
+#define _XOPEN_SOURCE 700
 
-#define handle_error_en(en, msg) do { errno = en; perror(msg); exit(EXIT_FAILURE); } while (0)
-
-static void *
-sig_thread(void *arg)
+void handler_SIGUSR2(int sig_numb)
 {
-    sigset_t *set = arg;
-    int s, sig;
-
-    for (;;) {
-        s = sigwait(set, &sig);
-        if (s != 0)
-            handle_error_en(s, "sigwait");
-        printf("Signal handling thread got signal %d\n", sig);
-    }
+    printf("SIGUSR2\n");
+    while(1);
 }
 
-int
-main(void)
+void handler_SIGUSR1(int sig_numb)
 {
-    pthread_t thread;
-    sigset_t set;
-    int s;
+    printf("SIGUSR1\n");
+    exit(EXIT_SUCCESS);
+}
 
-    /* Block SIGQUIT and SIGUSR1; other threads created by main()
-        will inherit a copy of the signal mask. */
 
-    sigemptyset(&set);
-    sigaddset(&set, SIGQUIT);
-    sigaddset(&set, SIGUSR1);
-    s = pthread_sigmask(SIG_BLOCK, &set, NULL);
-    if (s != 0)
-        handle_error_en(s, "pthread_sigmask");
+int main(void) {
+    struct sigaction sa, sa1;
 
-    s = pthread_create(&thread, NULL, &sig_thread, &set);
-    if (s != 0)
-        handle_error_en(s, "pthread_create");
+    sa.sa_handler = handler_SIGUSR2;
+    sigemptyset(&sa.sa_mask);
+    // sigfillset(&sa.sa_mask);
+    sa.sa_flags = 0;
+    if (sigaction(SIGUSR2, &sa, NULL) == -1) 
+        perror("Error sigaction SIGHUP\n");
 
-    /* Main thread carries on to create other threads and/or do
-        other work. */
-
-    pause();            /* Dummy pause so we can test program */
+    sa1.sa_handler = handler_SIGUSR1;
+    sigfillset(&sa1.sa_mask);
+    sa1.sa_flags = 0;
+    if (sigaction(SIGUSR1, &sa1, NULL) == -1) 
+        perror("Error sigaction SIGUSR1\n");
+    
+    while(1);
+    return 0;
 }

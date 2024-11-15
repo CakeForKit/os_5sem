@@ -97,7 +97,7 @@ int already_running(void)
     int conffd;
     char buf[16];
     char conf_buf[256];
-    mode_t perms = S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH;
+    int perms = S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH;
 
     fd = open(LOCKFILE, O_RDWR | O_CREAT, perms);
     if (fd == -1)
@@ -118,7 +118,6 @@ int already_running(void)
     ftruncate(fd, 0);   
     sprintf(buf, "%ld", (long)getpid());
     write(fd, buf, strlen(buf) + 1);
-    close(fd);
 
     if ((conffd = open(CONFFILE, O_RDWR | O_CREAT, perms)) == -1) // username userid
     {
@@ -181,8 +180,6 @@ void *thr_fn(void *arg)
 
         case SIGTERM:
             syslog(LOG_INFO, "got SIGTERM; exiting");
-            if (remove(LOCKFILE) == -1)
-                syslog(LOG_ERR, "error remove %s", LOCKFILE);
             if (remove(CONFFILE) == -1)
                 syslog(LOG_ERR, "error remove %s", CONFFILE);
             exit(EXIT_SUCCESS);
@@ -218,13 +215,14 @@ int main(int argc, char *argv[])
     }
 
     // до этого момента SIGHUP игнорируется
-    // Восстановить действие по умолчанию для сигнала SIGHUP и заблокировать все сигналы.
+    // Восстановить действие по умолчанию для сигнала SIGHUP 
     sa.sa_handler = SIG_DFL;
     sigemptyset(&sa.sa_mask);
     sa.sa_flags = 0;
     if (sigaction(SIGHUP, &sa, NULL) == -1)
         err_quit("%s:  невозможно восстановить действие SIG_DFL для SIGHUP");
 
+    // и заблокировать все сигналы.
     sigfillset(&mask);         
     if ((err = pthread_sigmask(SIG_BLOCK, &mask, NULL)) != 0)
         err_exit(err, "ошибка выполнения операции SIG_BLOCK");
