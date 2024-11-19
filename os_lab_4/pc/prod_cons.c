@@ -19,7 +19,8 @@ void producer(const int semid, buf_t * const buf) {
         buf->prod_pos = (buf->prod_pos + 1) % N_BUF;
         buf->sym_now = sym_next;
         printf("Производитель PID=%d положил '%c'", getpid(), sym_next);
-        if (DEBUG) {
+        
+        if (SHOWBUF) {
             printf("\t");
             for (size_t i = 0; i < N_BUF; ++i)
                 printf("%c", buf->buf[i]);
@@ -44,7 +45,7 @@ void consumer(const int semid, buf_t * const buf) {
         symb = buf->buf[buf->cons_pos];
         buf->cons_pos = (buf->cons_pos + 1) % N_BUF;
         printf("Потребитель   PID=%d взял    '%c'", getpid(), symb);
-        if (DEBUG) {
+        if (SHOWBUF) {
             buf->buf[tmp] = '-';
             printf("\t");
             for (size_t i = 0; i < N_BUF; ++i)

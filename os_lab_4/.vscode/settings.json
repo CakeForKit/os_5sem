@@ -1,5 +1,7 @@
 {
     "files.associations": {
-        "svshm_string.h": "c"
-    }
+        "svshm_string.h": "c",
+        "cerrno": "c"
+    },
+    "C_Cpp.errorSquiggles": "disabled"
 }

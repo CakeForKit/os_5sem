@@ -48,11 +48,11 @@ int main(void)
             } else if (WIFSIGNALED(wstatus)) {
                 printf("killed by signal %d\n", WTERMSIG(wstatus));
             } 
-            // else if (WIFSTOPPED(wstatus)) {
-            //     printf("stopped by signal %d\n", WSTOPSIG(wstatus));
-            // } else if (WIFCONTINUED(wstatus)) {
-            //     printf("continued\n");
-            // }
+            else if (WIFSTOPPED(wstatus)) {
+                printf("stopped by signal %d\n", WSTOPSIG(wstatus));
+            } else if (WIFCONTINUED(wstatus)) {
+                printf("continued\n");
+            }
             /*
             WIFEXITED(wstatus)      returns true if the child terminated normally, that is, by
                                     calling exit(3) or _exit(2), or by returning from main().

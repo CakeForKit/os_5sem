@@ -7,8 +7,8 @@
 #define BEMPTY 1
 #define BFULL 2
 
-#define PROD_CNT 4
-#define CONS_CNT 5
+#define PROD_CNT 8      // 4
+#define CONS_CNT 10     // 5
 
 #define N_BUF 10
 
@@ -21,6 +21,8 @@
 #include <sys/sem.h>
 #include <sys/shm.h>
 #include <sys/stat.h>
+#include <sys/types.h>
+#include <stdint.h>
 #include <sys/wait.h>
 #include <time.h>
 #include <string.h>
