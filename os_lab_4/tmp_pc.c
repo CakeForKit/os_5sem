@@ -1,288 +1,194 @@
-#include <sys/sem.h>
-#include <sys/shm.h>
-#include <sys/stat.h>
 #include <sys/wait.h>
-#include <stdio.h>
 #include <stdlib.h>
+#include <sys/shm.h>
+#include <sys/sem.h>
+#include <stdio.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
-#define SIZE_BUF 26
-#define PRODUCERS_AMOUNT 3
-#define CONSUMERS_AMOUNT 3
+#define ACTIVE_READERS  0
+#define ACTIVE_WRITER   3
 
-#define SB 0
-#define SE 1
-#define SF 2
+#define WRITE_QUEUE     1
+#define READ_QUEUE      2
+
+
+#define BIN_WRITER      4   // flag_edit
 
 #define P -1
 #define V  1
 
-struct sembuf start_produce[2] = { {SE, P, 0}, {SB, P, 0} };
-struct sembuf stop_produce[2] =  { {SB, V, 0}, {SF, V, 0} };
-struct sembuf start_consume[2] = { {SF, P, 0}, {SB, P, 0} };
-struct sembuf stop_consume[2] =  { {SB, V, 0}, {SE, V, 0} };
+struct sembuf start_read[] = {
+  {READ_QUEUE, V, 0},
+  {ACTIVE_WRITER, 0, 0},
+  {WRITE_QUEUE, 0, 0},
+  {ACTIVE_READERS, V, 0},
+  {READ_QUEUE, P, 0},
+};
+struct sembuf stop_read[] = {
+  {ACTIVE_READERS, P, 0},
+};
+struct sembuf start_write[] = {  
+  {WRITE_QUEUE, V, 0},
+  {ACTIVE_READERS, 0, 0},
+  {BIN_WRITER, P, 0},
+  {ACTIVE_WRITER, 0, 0},
+  {ACTIVE_WRITER, V, 0},
+  {WRITE_QUEUE, P, 0},
+};
+struct sembuf stop_write[] = {
+  {ACTIVE_WRITER, P, 0},
+  {BIN_WRITER, V, 0},
+};
 
-void producer(const int semid, const int shmid)
+int *number;
+int shmid;
+int semid;
+
+int init_monitor()
 {
-    char *addr = shmat(shmid, NULL, 0);
-    if (addr == (char *) -1)
-    {
-        perror("Can't shmat.\n");
-        exit(1);
-    }
-
-    char **prod_ptr = (char **) addr;
-    char **cons_ptr = prod_ptr + sizeof(char);
-    char *alpha_ptr = (char*) (cons_ptr + sizeof(char));
-
-    srand(getpid());
-    while(*alpha_ptr <= 'z')
-    {
-        int sem_op_p = semop(semid, start_produce, 2);
-        if (sem_op_p == -1)
-        {
-            perror("Can't semop\n");
-            exit(1);
-        }
-
-        **prod_ptr = *alpha_ptr;
-        printf("Producer %d - %c\n", getpid(), **prod_ptr);
-
-        (*prod_ptr)++;
-        (*alpha_ptr)++;
-
-        sleep(rand() % 2);
-
-        int sem_op_v = semop(semid, stop_produce, 2);
-        if (sem_op_v == -1)
-        {
-            perror("Can't semop\n");
-            exit(1);
-        }
-    }
-
-    if (shmdt((void *) prod_ptr) == -1)
-    {
-        perror("Can't shmdt.\n");
-        exit(1);
-    }
-
-    exit(0);
+    if (semctl(semid, ACTIVE_READERS, SETVAL, 0) == -1)
+        return EXIT_FAILURE;
+    if (semctl(semid, WRITE_QUEUE, SETVAL, 0) == -1)
+        return EXIT_FAILURE;
+    if (semctl(semid, READ_QUEUE, SETVAL, 0) == -1)
+        return EXIT_FAILURE;
+    if (semctl(semid, ACTIVE_WRITER, SETVAL, 0) == -1)
+        return EXIT_FAILURE;
+    if (semctl(semid, BIN_WRITER, SETVAL, 1) == -1)
+        return EXIT_FAILURE;
+    return EXIT_SUCCESS;
 }
 
-void consumer(const int semid, const int shmid)
-{   
-    char *addr = shmat(shmid, NULL, 0);
-    if (addr == (char *) -1)
-    {
-        perror("Can't shmat.\n");
-        exit(1);
-    }
 
-    char **prod_ptr = (char **) addr;
-    char **cons_ptr = prod_ptr + sizeof(char);
-    char *alpha_ptr = (char*) (cons_ptr + sizeof(char));
-
-    srand(getpid());
-    while(**cons_ptr <= 'z')
-    {
-        int sem_op_p = semop(semid, start_consume, 2);
-        if (sem_op_p == -1)
-        {
-            perror("Can't semop\n");
-            exit(1);
-        }
-        
-        printf("Consumer %d - %c\n", getpid(), **cons_ptr);
-        (*cons_ptr)++;
-        sleep(rand() % 3);
-        printf("%d\n", getpid());
-        int sem_op_v = semop(semid, stop_consume, 2);
-        if (sem_op_v == -1)
-        {
-            perror("Can't semop\n");
-            exit(1);
-        }
-    }
-
-    if (shmdt((void *) addr) == -1)
-    {
-        perror("Can't shmdt.\n");
-        exit(1);
-    }
-
-    exit(0);
+void log_exit(const char *msg)
+{
+  perror(msg);
+  exit(EXIT_FAILURE);
 }
 
-int main()
-{   
-    int shmid, semid;
-    // Значение IPC_PRIVATE указывает, что к разделяемой
-    // памяти нельзя получить доступ другим процессам.
-    // shmget - создает новый разделяемый сегмент.
-    // S_IRUSR	Владелец может читать.
-    // S_IWUSR	Владелец может писать.
-    // S_IRGRP	Группа может читать.
-    // S_IROTH	Остальные могут читать.
-    int perms = S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH;
+void writer()
+{
+  srand(getpid());
+  //for (int i = 0; i < 4; i++)
+  while(1)
+  {
+    sleep(rand() % 5);
+    int offset = rand() % 26;
 
-    char** prod_ptr;
-    char** cons_ptr;
-    char* alpha_ptr;
-
-    key_t shmkey = ftok("./key.txt", 1);
-    if (shmkey == -1)
+    if (semop(semid, start_write, 6) == -1)
     {
-        perror("Can't ftok for shm.\n");
-        exit(1);
+      perror("cant start_write");
+      exit(EXIT_FAILURE);
     }
+    (*number)++;
+    printf("Writer incremented = \'%d\'\n", (*number));
 
-    if ((shmid = shmget(shmkey, (SIZE_BUF + 3) * sizeof(char), IPC_CREAT | perms)) == -1)
+    if (semop(semid, stop_write, 2) == -1)
     {
-        perror("Can't shmget.\n");
-        exit(1);
+      perror("cant stop_write");
+      exit(EXIT_FAILURE);
     }
+  }
+  exit(EXIT_SUCCESS);
+}
 
-    // Функция shmat() возвращает указатель на сегмент
-    // shmaddr (второй аргумент) равно NULL,
-    // то система выбирает подходящий (неиспользуемый)
-    // адрес для подключения сегмента.
-    char *buf = shmat(shmid, NULL, 0);
-    if (buf == (char *) -1)
+void reader()
+{
+  srand(getpid());
+  //for (int i = 0; i < 4; i++)
+  while(1)
+  {
+    sleep(rand() % 2);
+    int offset = rand() % 26;
+
+    if (semop(semid, start_read, 5) == -1)
     {
-        perror("Can't shmat.\n");
-        exit(1);
+      perror("cant start_read");
+      exit(EXIT_FAILURE);
     }
-
-    prod_ptr = (char **) buf;
-    cons_ptr = prod_ptr + sizeof(char);
-    alpha_ptr = (char*) (cons_ptr + sizeof(char));
-
-    *cons_ptr = alpha_ptr + sizeof(char);
-    *prod_ptr = *cons_ptr;
-    *alpha_ptr = 'a';
-
-    key_t semkey = ftok("./key.txt", 1);
-    if (semkey == -1)
+    printf("Reader got value = \'%d\'\n", (*number));
+    if (semop(semid, stop_read, 1) == -1)
     {
-        perror("Can't ftok for sem.\n");
-        exit(1);
+      perror("cant stop_read");
+      exit(EXIT_FAILURE);
     }
+  }
+  exit(EXIT_SUCCESS);
+}
 
-    if ((semid = semget(semkey, 3, IPC_CREAT | perms)) == -1)
-    {
-        perror("Can't semget.\n");
-        exit(1);
-    }
+int main(void) 
+{
+  const int wr_count = 3;
+  const int rd_count = 4;
+  const int perms = S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH;
 
-    // Создание семафоров (3 семафора)
-    int c_sb = semctl(semid, SB, SETVAL, 1);
-    int c_se = semctl(semid, SE, SETVAL, SIZE_BUF);
-    int c_sf = semctl(semid, SF, SETVAL, 0);
+  key_t semkey = ftok("./key.txt", 1);
+  if (semkey == -1)
+    return EXIT_FAILURE;
 
-    if (c_se == -1 || c_sf == -1 || c_sb == -1)
-    {
-        perror("Can't semctl.\n");
-        exit(1);
-    }
+  if ((semid = semget(semkey, 5, IPC_CREAT | perms)) == -1)
+    return EXIT_FAILURE;
 
-    pid_t chpid[CONSUMERS_AMOUNT + PRODUCERS_AMOUNT - 1];
-    
+  key_t shmkey = ftok("./key.txt", 2);
+  if (shmkey == -1)
+    return EXIT_FAILURE;
 
-    // Создание оставшихся производителей
-    for (int i = 0; i < PRODUCERS_AMOUNT - 1; i++)
-    {
-        chpid[i] = fork();
-        if (chpid[i] == -1)
-        {
-            perror("Can't fork producer.\n");
-            exit(1);
-        }
+  shmid = shmget(shmkey, sizeof(int), IPC_CREAT | perms);
+  if (shmid == -1)
+    return EXIT_FAILURE;
 
-        if (chpid[i] == 0)
-        {
-            producer(semid, shmid);
-        }
-    }
+  number = shmat(shmid, 0, perms);
+  if (number == (int *)-1)
+    return EXIT_FAILURE;
+  *number = 0;
 
-    // Создание потребителей
-    for (int i = PRODUCERS_AMOUNT - 1; i < CONSUMERS_AMOUNT + PRODUCERS_AMOUNT - 1; i++)
-    {
-        chpid[i] = fork();
-        if (chpid[i] == -1)
-        {
-            perror("Can't fork consumer.\n");
-            exit(1);
-        }
+  if (init_monitor())
+    log_exit("cant init_monitor");
 
-        if (chpid[i] == 0)
-        {
-            consumer(semid, shmid);
-        }
-    }
+  pid_t chpid[wr_count + rd_count];
+  for (int i = 0; i < wr_count; i++) 
+  {
+    if ((chpid[i] = fork()) == -1)
+      log_exit("cant fork");
+    else if (chpid[i] == 0)
+      writer();
+    else
+    {}  
+  }
 
-    // Производитель (Parent)
-    srand(getpid());
-    while(*alpha_ptr <= 'z')
-    {
-        int sem_op_p = semop(semid, start_produce, 2);
-        if (sem_op_p == -1)
-        {
-            perror("Can't semop\n");
-            exit(1);
-        }
+  for (int i = wr_count; i < rd_count + wr_count; i++) 
+  {
+    if ((chpid[i] = fork()) == -1)
+      log_exit("cant fork");
+    else if (chpid[i] == 0)
+      reader();
+    else
+    {}  
+  }
 
-        **prod_ptr = *alpha_ptr;
-        printf("Producer %d - %c\n", getpid(), **prod_ptr);
+  for (int i = 0; i < rd_count + wr_count; i++)
+  {
+    int status;
+    if (waitpid(chpid[i], &status, WUNTRACED) == -1)
+      log_exit("cant wait");
 
-        (*prod_ptr)++;
-        (*alpha_ptr)++;
+    if (WIFEXITED(status)) 
+        printf("child with pid %d has finished, code: %d\n", chpid[i], WEXITSTATUS(status));
+    else if (WIFSIGNALED(status))
+        printf("child with pid %d has finished by unhandlable signal, signum: %d\n", chpid[i], WTERMSIG(status));
+    else if (WIFSTOPPED(status))
+        printf("child with pid %d has finished by signal, signum: %d\n", chpid[i], WSTOPSIG(status));
+  }
 
-        sleep(rand() % 2);
+  if (semctl(semid, 1, IPC_RMID, NULL) == -1)
+    log_exit("Can't semctl\n");
 
-        int sem_op_v = semop(semid, stop_produce, 2);
-        if (sem_op_v == -1)
-        {
-            perror("Can't semop\n");
-            exit(1);
-        }
-    }
+  if (shmdt(number) == -1)
+    log_exit("Can't shmdt\n");
+  
+  if (shmctl(shmid, IPC_RMID, NULL) == -1)
+    log_exit("Can't shmctl\n");
 
-    // Ожидание завершение всех children
-    for (int i = 0; i < (CONSUMERS_AMOUNT + PRODUCERS_AMOUNT - 1); i++) 
-    {
-        int status;
-        printf("Ожидание завершение - pid %d\n", chpid[i]);
-        if (waitpid(chpid[i], &status, WUNTRACED) == -1)
-        {
-            perror("Can't waitpid.\n");
-            exit(1);
-        }
-
-        if (WIFEXITED(status)) 
-            printf("Child with pid %d has finished, code: %d\n", chpid[i], WEXITSTATUS(status));
-        else if (WIFSIGNALED(status))
-            printf("Child with pid %d has finished by unhandlable signal, signum: %d\n", chpid[i], WTERMSIG(status));
-        else if (WIFSTOPPED(status))
-            printf("Child with pid %d has finished by signal, signum: %d\n", chpid[i], WSTOPSIG(status));
-    }
-
-    if (shmdt((void *) prod_ptr) == -1)
-    {
-        perror("Can't shmdt.\n");
-        exit(1);
-    }
-
-    // IPC_RMID используется для пометки сегмента как удаленного.
-    if (semctl(semid, 1, IPC_RMID, NULL) == -1)
-    {
-        perror("Can't delete semafor.\n");
-        exit(1);
-    }
-
-    if (shmctl(shmid, IPC_RMID, NULL) == -1) 
-    {
-        perror("Can't mark a segment as deleted.\n");
-        exit(1);
-    }
+  return EXIT_SUCCESS;
 }

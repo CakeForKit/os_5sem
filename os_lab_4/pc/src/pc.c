@@ -109,7 +109,7 @@ int main(int argc, char *argv[]) {
     buf_t *buf;
     int cpid;
     int wstatus;
-    pid_t w, chpid[PROD_CNT + CONS_CNT];
+    pid_t w;
     key_t key;
 
     if (signal(SIGINT, handler) == SIG_ERR) 
@@ -146,25 +146,14 @@ int main(int argc, char *argv[]) {
         if ((cpid = fork()) == -1)
             errExit("fork");
         else if (cpid == 0)
-        {
-            chpid[i] = cpid;
             producer(semid, buf);
-            exit(0);
-        }
     }
     for (size_t i = 0; i < CONS_CNT; ++i) {
         if ((cpid = fork()) == -1)
             errExit("fork");
         else if (cpid == 0)
-        {
-            chpid[i + PROD_CNT] = cpid;
             consumer(semid, buf);
-            exit(0);
-        }
     }
-
-    if (signal(SIGINT, handler) == SIG_ERR) 
-        errExit("signal");
 
     for (size_t i = 0; i < PROD_CNT + CONS_CNT; ++i) {
         w = waitpid(-1, &wstatus, WUNTRACED | WCONTINUED); // until one of its children terminates (ANY child process.)
