@@ -32,11 +32,10 @@ struct sembuf Vcons[2] = {{BINARY, V, SEM_UNDO}, {BEMPTY, V, SEM_UNDO}};
 int f_sigint = 1;
 
 void handler(int sig_numb) {
-    printf("PID=%d signal=%d\n", getpid(),sig_numb);
     f_sigint = 0;
 }
 
-void producer(const int semid, char** prod_ptr, char* alfa) {
+void producer(const int semid, char** prod_ptr, char* alfa, char *buf) {
     srand(time(NULL));
     while(f_sigint) {
         sleep(rand() % (MAX_TIME_SLEEP + 1));
@@ -45,14 +44,16 @@ void producer(const int semid, char** prod_ptr, char* alfa) {
             sprintf(err_msg, "ERR: semop PID=%d, errno=%d (EINTR=%d)", getpid(), errno, EINTR);
             errExit(err_msg);
         }
-
-        *(*prod_ptr) = (*alfa);
-        printf("Производитель PID=%d положил '%c'\n", getpid(), *(*prod_ptr));
-        (*prod_ptr)++;
-        if (*alfa == 'z')
+        if ((*alfa) - 1 == 'z')
             *alfa = 'a';
-        else
-            (*alfa)++;
+        (*prod_ptr)++;
+        *(*prod_ptr) = (*alfa)++;
+        printf("Производитель PID=%d положил '%c'", getpid(), *alfa);
+
+        for (char *c = buf; c < buf + N_BUF; ++c) {
+            printf("%c", c);
+        }
+        printf("\n");
 
         if (semop(semid, Vprod, 2) == -1)
         errExit("semop");
@@ -60,7 +61,7 @@ void producer(const int semid, char** prod_ptr, char* alfa) {
     exit(EXIT_SUCCESS);
 }
 
-void consumer(const int semid, char** cons_ptr) {
+void consumer(const int semid, char** cons_ptr, char* alfa, , char *buf) {
     srand(time(NULL));
     while(f_sigint) {
         sleep(rand() % (MAX_TIME_SLEEP + 1));
@@ -69,8 +70,14 @@ void consumer(const int semid, char** cons_ptr) {
             sprintf(err_msg, "ERR: semop PID=%d, errno=%d (EINTR=%d)", getpid(), errno, EINTR);
             errExit(err_msg);
         }
-        printf("Потребитель   PID=%d взял    '%c'\n", getpid(), *(*cons_ptr));
+        *(alfa - 1) = '-';
         (*cons_ptr)++;
+        printf("Потребитель   PID=%d взял    '%c'", getpid(), *(*cons_ptr));
+
+        for (char *c = buf; c < buf + N_BUF; ++c) {
+            printf("%c", c);
+        }
+        printf("\n");
 
         if (semop(semid, Vcons, 2) == -1)
             errExit("semop");
@@ -81,8 +88,10 @@ void consumer(const int semid, char** cons_ptr) {
 int main(int argc, char *argv[]) {
     int semid, shmid;
     int perms = S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH;
-    char** prod_ptr, **cons_ptr;
-    char *alfa, *addr;
+    char** prod_ptr;
+    char** cons_ptr;
+    char* alfa;
+    char *addr;
     int cpid, wstatus;
     pid_t w;
     key_t key;
@@ -103,8 +112,8 @@ int main(int argc, char *argv[]) {
 
     prod_ptr = (char **) addr;
     cons_ptr = prod_ptr + sizeof(char *);
-    alfa = (char *)(cons_ptr + sizeof(char *));
-    *cons_ptr = alfa + 1;
+    alfa = (char *)(cons_ptr + sizeof(char));
+    *cons_ptr = alfa + sizeof(char);
     *prod_ptr = *cons_ptr;
     *alfa = 'a';
 
@@ -138,6 +147,7 @@ int main(int argc, char *argv[]) {
             sprintf(err_msg, "ERR: waitpid PID=%d, errno=%d", getpid(), errno);
             errExit(err_msg);
         }
+
 
         printf("PID=%d ", w);
         if (WIFEXITED(wstatus)) {                                    

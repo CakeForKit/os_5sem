@@ -12,7 +12,7 @@
                         } while (0)
 #define MAX_TIME_SLEEP 1
 
-#define WRITERS_CNT     34   // 3
+#define WRITERS_CNT     4   // 3
 #define READERS_CNT     6   // 5
 
 #define FLAG_EDIT       0
@@ -38,6 +38,40 @@ struct sembuf start_write[] = {
 };
 struct sembuf stop_write[] = { {FLAG_EDIT, -1, 0} };
 
+void startRead(int semid) {
+    if (semop(semid, start_read, 5) == -1) {
+        char err_msg[100];
+        sprintf(err_msg, "ERR: semop(start_read) PID=%d, errno=%d (EINTR=%d)", getpid(), errno, EINTR);
+        perror(err_msg); 
+        exit(EXIT_FAILURE);
+    }
+}
+
+void stopRead(int semid) {
+    if (semop(semid, stop_read, 1) == -1) {
+        char err_msg[100];
+        sprintf(err_msg, "ERR: semop PID=%d, errno=%d (EINTR=%d)", getpid(), errno, EINTR);
+        perror(err_msg); 
+        exit(EXIT_FAILURE);
+    }
+}
+
+void startWrite(int semid) {
+    if (semop(semid, start_write, 5) == -1) {
+        char err_msg[100];
+        sprintf(err_msg, "ERR: semop(start_write) PID=%d, errno=%d (EINTR=%d)", getpid(), errno, EINTR);
+        perror(err_msg); 
+        exit(EXIT_FAILURE);
+    }
+}
+
+void stopWrite(int semid) {
+    if (semop(semid, stop_write, 1) == -1){
+        perror("semop"); 
+        exit(EXIT_FAILURE);
+    }
+}
+
 int f_sigint = 1;
 
 void handler(int sig_numb) {
@@ -50,20 +84,9 @@ void reader(int semid, char *buf) {
     while(f_sigint) {
         sleep(rand() % (MAX_TIME_SLEEP + 1));
 
-        if (semop(semid, start_read, 5) == -1) {
-            char err_msg[100];
-            sprintf(err_msg, "ERR: semop(start_read) PID=%d, errno=%d (EINTR=%d)", getpid(), errno, EINTR);
-            perror(err_msg); 
-            exit(EXIT_FAILURE);
-        }
+        startRead(semid);
         printf("Читатель PID=%d считал '%c'\n", getpid(), *buf);
-
-        if (semop(semid, stop_read, 1) == -1) {
-            char err_msg[100];
-            sprintf(err_msg, "ERR: semop PID=%d, errno=%d (EINTR=%d)", getpid(), errno, EINTR);
-            perror(err_msg); 
-            exit(EXIT_FAILURE);
-        }
+        stopRead(semid);
     }
     exit(EXIT_SUCCESS);
 }
@@ -73,23 +96,14 @@ void writer(int semid, char *buf) {
     while(f_sigint) {
         sleep(rand() % (MAX_TIME_SLEEP + 1));
         
-        if (semop(semid, start_write, 5) == -1) {
-            char err_msg[100];
-            sprintf(err_msg, "ERR: semop(start_write) PID=%d, errno=%d (EINTR=%d)", getpid(), errno, EINTR);
-            perror(err_msg); 
-            exit(EXIT_FAILURE);
-        }
+        startWrite(semid);
         if (*buf == 'z')
             *buf = 'a';
         else
             (*buf)++;
         // sleep(1);
         printf("Писатель PID=%d записал '%c'\n", getpid(), *buf);
-
-        if (semop(semid, stop_write, 1) == -1){
-            perror("semop"); 
-            exit(EXIT_FAILURE);
-        }
+        stopWrite(semid);
     }
     exit(EXIT_SUCCESS);
 }
