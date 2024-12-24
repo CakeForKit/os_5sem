@@ -1,191 +1,224 @@
-#include <stdio.h>
-#include <time.h>
-#include <stdlib.h>
+#include <sys/sem.h>
 #include <sys/shm.h>
 #include <sys/stat.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include <unistd.h>
-#include <sys/types.h>
-#include <sys/ipc.h>
-#include <sys/sem.h>
-#include <wait.h>
+#include <sys/wait.h>
+#include <time.h>
+#include <cstring>
+#include <errno.h>
 
-#define READERS_CNT 4
-#define WRITERS_CNT 3
+#define SHMSIZE sizeof(char)
+#define PERMS (S_IRWXU | S_IRWXG | S_IRWXO)
+#define NW  4
+#define NR  5
 
-#define ITER_CNT 32
+#define C_WAITING_R 0   // readers_queue
+#define C_ACTIVE_R 1    // numb_of_readers
+#define C_WAITING_W 2   // writers_queue
+#define B_ACTIVE_W 3    // active_writer
+#define B_SEM 4         // bin_sem
 
-#define ACTIVE_READER 0
-#define ACTIVE_WRITER 1
-#define WRITE_QUEUE 2
-#define READ_QUEUE 3
-#define BIN_WRITER 4
+struct sembuf sem_start_read[] = {
+    { C_WAITING_R,  1, SEM_UNDO },
+    //{ B_ACTIVE_W,   0, SEM_UNDO },
+    { B_SEM,	    0, SEM_UNDO },
+    { C_WAITING_W,  0, SEM_UNDO },
+    { C_ACTIVE_R,   1, SEM_UNDO },
+    { C_WAITING_R, -1, SEM_UNDO },
+};
 
-struct sembuf reader_lock[] = {{READ_QUEUE, 1, 0},
-                               {ACTIVE_WRITER, 0, 0},
-                               {WRITE_QUEUE, 0, 0},
-                               {ACTIVE_READER, 1, 0},
-                               {READ_QUEUE, -1, 0}};
+struct sembuf sem_stop_read[] = {
+    { C_ACTIVE_R,  -1, SEM_UNDO }
+};
 
-struct sembuf reader_release[] = {{ACTIVE_READER, -1, 0}};
+struct sembuf sem_start_write[] = {
+    { C_WAITING_W,  1, SEM_UNDO },
+    { C_ACTIVE_R,   0, SEM_UNDO },
+    { B_SEM,	    1, SEM_UNDO },
+    { B_ACTIVE_W,  -1, SEM_UNDO },
+    { C_WAITING_W, -1, SEM_UNDO },
+};
 
-struct sembuf writer_lock[] = {{WRITE_QUEUE, 1, 0},
-                               {ACTIVE_READER, 0, 0},
-                               {ACTIVE_WRITER, 0, 0},
-                               {ACTIVE_WRITER, 1, 0},
-                               {BIN_WRITER, -1, 0},
-                               {WRITE_QUEUE, -1, 0}};
+struct sembuf sem_stop_write[] = {
+    { B_ACTIVE_W,   1, SEM_UNDO },
+    { B_SEM,	   -1, SEM_UNDO }
+};
 
-struct sembuf writer_release[] = {{ACTIVE_WRITER, -1, 0},
-                                  {BIN_WRITER, 1, 0}};
+int semid;
+int fl = 1;
 
-int start_read(int sem_id)
+void sig_handler(int sig_num)
 {
-    return semop(sem_id, reader_lock, 5);
+    fl = 0;
+    printf("pid: %d, signal: %d\n", getpid(), sig_num);
 }
 
-int stop_read(int sem_id)
+int start_read(const int semid)
 {
-    return semop(sem_id, reader_release, 1);
+    return semop(semid, sem_start_read, 5);
 }
 
-int start_write(int sem_id)
+int stop_read(const int semid)
 {
-    return semop(sem_id, writer_lock, 6);
+    return semop(semid, sem_stop_read, 1);
 }
 
-int stop_write(int sem_id)
+int start_write(const int semid)
 {
-    return semop(sem_id, writer_release, 2);
+    return semop(semid, sem_start_write, 5);
 }
 
-int reader_run(int *const addr, const int sem_id, const int rdid)
+int stop_write(const int semid)
 {
-    srand(time(NULL) + rdid);
-
-    for (size_t i = 0; i < ITER_CNT; i++)
-    {
-        sleep(rand() % 5 + 1);
-
-        if (start_read(sem_id) == -1)
-            return 1;
-
-        printf("Reader %d read:  %d\n", rdid + 1, *addr);
-
-        if (stop_read(sem_id) == -1)
-            return 1;
-    }
-
-    return 0;
+    return semop(semid, sem_stop_write, 2);
 }
 
-int writer_run(int *const addr, const int sem_id, const int wrid)
+void reader(int semid, char *ch)
 {
-    for (size_t i = 0; i < ITER_CNT; i++)
+    srand(time(NULL) + getpid());
+    
+    while (fl)
     {
-        sleep(rand() % 5 + 1);
-
-        if (start_write(sem_id) == -1)
-            return 1;
-
-        printf("Writer %d write: %d\n", wrid + 1, ++(*addr));
-
-        if (stop_write(sem_id) == -1)
-            return 1;
-    }
-
-    return 0;
-}
-
-int main(void)
-{
-    setbuf(stdout, NULL);
-
-    key_t shmkey = ftok("/dev/null", 1);
-    if (shmkey == (key_t)-1)
-    {
-        perror("ftok (shmkey)\n");
-        exit(1);
-    }
-
-    int perms = S_IRWXU | S_IRWXG | S_IRWXO;
-    int fd = shmget(shmkey, sizeof(int), perms | IPC_CREAT);
-    if (fd == -1)
-    {
-        perror("shmget");
-        exit(1);
-    }
-
-    int *addr = shmat(fd, 0, 0);
-    if (addr == (void *)-1)
-    {
-        perror("shmat");
-        exit(1);
-    }
-
-    key_t semkey = ftok("/dev/null", 1);
-    if (semkey == (key_t)-1)
-    {
-        perror("ftok (semkey)\n");
-        exit(1);
-    }
-
-    int sem_id = semget(semkey, 5, perms | IPC_CREAT);
-    if (sem_id == -1)
-    {
-        perror("semget");
-        exit(1);
-    }
-
-    semctl(sem_id, ACTIVE_READER, SETVAL, 0);
-    semctl(sem_id, ACTIVE_WRITER, SETVAL, 0);
-    semctl(sem_id, WRITE_QUEUE, SETVAL, 0);
-    semctl(sem_id, READ_QUEUE, SETVAL, 0);
-    semctl(sem_id, BIN_WRITER, SETVAL, 1);
-
-    for (size_t i = 0; i < READERS_CNT; i++)
-    {
-        int child_pid;
-        if ((child_pid = fork()) == -1)
-        {
-            perror("can't fork (reader)");
+        usleep((0.2 + (double)rand() / RAND_MAX) * 1000000);
+        if (start_read(semid) == -1) {
+        	char err_msg[100];
+            sprintf(err_msg, "Error: semop (start_read) pid = %d, errno %d", getpid(), errno);
+            perror(err_msg);
             exit(1);
         }
-        else if (child_pid == 0)
-        {
-            reader_run(addr, sem_id, i);
-            return 0;
-        }
-    }
-
-    for (size_t i = 0; i < WRITERS_CNT; i++)
-    {
-        int child_pid;
-        if ((child_pid = fork()) == -1)
-        {
-            perror("can't fork (writer)");
+        
+        printf("	Reader %5d <<< %s\n", getpid(), ch);
+        
+        if (stop_read(semid) == -1) {
+        	char err_msg[100];
+            sprintf(err_msg, "Error: semop (stop_read) pid = %d, errno %d", getpid(), errno);
+            perror(err_msg);
             exit(1);
         }
-        else if (child_pid == 0)
-        {
-            writer_run(addr, sem_id, i);
-            return 0;
+    }
+    exit(0);
+}
+
+void writer(int semid, char *ch)
+{
+    srand(time(NULL) + getpid());
+    
+    while (fl)
+    {
+        usleep((0.2 + (double)rand() / RAND_MAX) * 1000000);
+        if (start_write(semid) == -1) {
+        	char err_msg[100];
+            sprintf(err_msg, "Error: semop (start_write) pid = %d, errno %d", getpid(), errno);
+            perror(err_msg);
+            exit(1);
+        }
+        
+        if (*ch == 'z')
+        	*ch = 'a'-1;
+        (*ch)++;
+		printf("Writer %5d >>> %s\n", getpid(), ch);
+		
+        
+        if (stop_write(semid) == -1) {
+        	char err_msg[100];
+            sprintf(err_msg, "Error: semop (stop_write) pid = %d, errno %d", getpid(), errno);
+            perror(err_msg);
+            exit(1);
         }
     }
+    exit(0);
+}
 
-    for (size_t i = 0; i < READERS_CNT + WRITERS_CNT; i++)
-    {
-        int status;
-        if (wait(&status) == -1)
-            perror("Error with child process.\n");
-        else if (!WIFEXITED(status))
-            fprintf(stderr, "Children process %zu terminated abnormally.", i);
+int main()
+{
+    if (signal(SIGINT, sig_handler) == SIG_ERR) {
+    	perror("Error: signal.\n");
+    	exit(EXIT_FAILURE);
     }
 
-    if (shmdt(addr) == -1 || shmctl(fd, IPC_RMID, NULL) == -1 || semctl(sem_id, IPC_RMID, 0) == -1)
+    pid_t pids[NW + NR];
+
+	// Преобразование имени файла и идентификатора проекта в ключ для системных вызовов
+    key_t shmkey = ftok("keyfile", 1);
+    if (shmkey == (key_t) -1) { perror("Error: ftok\n"); exit(1); }
+    
+	// Создание сегмента разделяемой памяти или подтверждение прав доступа (возвр. - идентефикатор)
+    int shmid = shmget(shmkey, SHMSIZE, IPC_CREAT | PERMS);
+    if (shmid == -1) { perror("Error: shmget\n"); exit(1); }
+
+	// Присоединение сегмента разделяемой памяти к адресному пр-ву процесса
+    char *shmaddr = (char*)shmat(shmid, 0, 0);
+    if (shmaddr == (char*)-1) { perror("Error: shmat\n"); exit(1); }
+    
+    *shmaddr = 'a'-1;
+
+    int semkey = ftok("keyfile", 2);
+    if (semkey == (key_t) -1) { perror("Error: ftok\n"); exit(1); }
+    
+    // Создание нового набора семафоров или открытие уже имеющегося
+	if ((semid = semget(semkey, 5, IPC_CREAT | PERMS)) == -1) { perror("Error: semget\n"); exit(1); }
+
+	// Изменение управляющих параметров набора семафоров
+    int cbsaw = semctl(semid, B_ACTIVE_W, SETVAL, 1);
+	if (cbsaw == -1) { perror("Error: semctl\n"); exit(1); }
+	cbsaw = semctl(semid, B_SEM, SETVAL, 0);
+	if (cbsaw == -1) { perror("Error: semctl\n"); exit(1); }
+	cbsaw = semctl(semid, C_WAITING_R, SETVAL, 0);
+	if (cbsaw == -1) { perror("Error: semctl\n"); exit(1); }
+	cbsaw = semctl(semid, C_ACTIVE_R, SETVAL, 0);
+	if (cbsaw == -1) { perror("Error: semctl\n"); exit(1); }
+	cbsaw = semctl(semid, C_WAITING_W, SETVAL, 0);
+	if (cbsaw == -1) { perror("Error: semctl\n"); exit(1); }
+	
+
+    for (int i = 0; i < NW; i++)
     {
-        perror("shmdt\n");
+        pids[i] = fork();
+        if (pids[i] == -1) { perror("Error: w can't fork\n"); exit(1); }
+        if (pids[i] == 0) { writer(semid, shmaddr); }
+    }
+    for (int i = 0; i < NR; i++)
+    {
+        pids[NW + i] = fork();
+        if (pids[NW + i] == -1) { perror("Error: r can't fork\n"); exit(1); }
+        if (pids[NW + i] == 0) { reader(semid, shmaddr); }
+    }
+
+	int status;
+
+	for (int i = 0; i < (NW + NR); i++) 
+    {
+        pid_t w = waitpid(pids[i], &status, 0);
+        if (w == -1) {
+            perror("Error: waitpid.\n");
+            exit(EXIT_FAILURE);
+        }
+		
+		if (WIFEXITED(status)) {
+		   printf("exited, status=%d, PID = %d\n", WEXITSTATUS(status), w);
+	   	} else if (WIFSIGNALED(status)) {
+		   printf("killed by signal %d, PID = %d\n", WTERMSIG(status), w);
+	   	} else if (WIFSTOPPED(status)) {
+		   printf("stopped by signal %d, PID = %d\n", WSTOPSIG(status), w);
+	   	}
+    }
+
+	
+    // Отсоединение сегмента разделяемой памяти от адресного пр-ва процесса
+    if (shmdt(shmaddr) == -1) { perror("Error: shmdt\n"); exit(1); }
+
+	// Удаление сегмента разделяемой памяти
+    if (shmctl(shmid, IPC_RMID, NULL) == -1) {
+        perror("Error: rm shm error\n");
         exit(1);
     }
 
-    return 0;
+	// Удаление набора семафоров
+	if (semctl(semid, 0, IPC_RMID) == -1) {
+        perror("Error: rm sem error\n");
+        exit(1);
+    }
+    
 }

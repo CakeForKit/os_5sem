@@ -8,35 +8,34 @@
 #include <errno.h>
 #include <time.h>
 
-#define errExit(msg)    do { perror(msg); exit(EXIT_FAILURE); \
-                        } while (0)
-#define MAX_TIME_SLEEP 1
+#define max_time_sleep 1
 
-#define WRITERS_CNT     34   // 3
-#define READERS_CNT     6   // 5
+#define writers_cnt     3   // 3
+#define readers_cnt     6   // 5
 
-#define FLAG_EDIT       0
-#define NUMB_OF_READERS  1
-#define WRITERS_QUEUE    2
-#define READERS_QUEUE   3
+#define active_writer       0
+#define numb_of_readers  1
+#define writers_queue    2
+#define readers_queue   3
+#define bin_sem 4
 
 struct sembuf start_read[] = {
-    {READERS_QUEUE, 1, 0},
-    {FLAG_EDIT, 0, 0},
-    {WRITERS_QUEUE, 0, 0},
-    {NUMB_OF_READERS, 1, 0},
-    {READERS_QUEUE, -1, 0}
+    {readers_queue, 1, 0},
+    {active_writer, 0, 0},
+    {writers_queue, 0, 0},
+    {numb_of_readers, 1, 0},
+    {readers_queue, -1, 0}
 };
-struct sembuf stop_read[] = { {NUMB_OF_READERS, -1, 0} };
+struct sembuf stop_read[] = { {numb_of_readers, -1, 0} };
 
 struct sembuf start_write[] = {
-    {WRITERS_QUEUE, 1, 0},
-    {NUMB_OF_READERS, 0, 0},
-    {FLAG_EDIT, 0, 0},
-    {FLAG_EDIT, 1, 0},
-    {WRITERS_QUEUE, -1, 0}
+    {writers_queue, 1, 0},
+    {numb_of_readers, 0, 0},
+    {bin_sem, -1, 0},
+    {active_writer, 1, 0},
+    {writers_queue, -1, 0}
 };
-struct sembuf stop_write[] = { {FLAG_EDIT, -1, 0} };
+struct sembuf stop_write[] = { {active_writer, -1, 0}, {bin_sem, 1, 0} };
 
 int f_sigint = 1;
 
@@ -48,7 +47,7 @@ void handler(int sig_numb) {
 void reader(int semid, char *buf) {
     srand(time(NULL));
     while(f_sigint) {
-        sleep(rand() % (MAX_TIME_SLEEP + 1));
+        sleep(rand() % (max_time_sleep + 1));
 
         if (semop(semid, start_read, 5) == -1) {
             char err_msg[100];
@@ -71,7 +70,7 @@ void reader(int semid, char *buf) {
 void writer(int semid, char *buf) {
     srand(time(NULL));
     while(f_sigint) {
-        sleep(rand() % (MAX_TIME_SLEEP + 1));
+        sleep(rand() % (max_time_sleep + 1));
         
         if (semop(semid, start_write, 5) == -1) {
             char err_msg[100];
@@ -86,7 +85,7 @@ void writer(int semid, char *buf) {
         // sleep(1);
         printf("Писатель PID=%d записал '%c'\n", getpid(), *buf);
 
-        if (semop(semid, stop_write, 1) == -1){
+        if (semop(semid, stop_write, 2) == -1){
             perror("semop"); 
             exit(EXIT_FAILURE);
         }
@@ -107,7 +106,7 @@ int main(int argc, char *argv[]) {
         exit(EXIT_FAILURE);
     }
 
-    key = ftok(argv[0], 1);
+    key = ftok(argv[0], 2);
     if (key == -1){
         perror("ftok"); 
         exit(EXIT_FAILURE);
@@ -125,29 +124,33 @@ int main(int argc, char *argv[]) {
     }
     *buf = 'a';
 
-    semid = semget(key, 4, IPC_CREAT | perms);
+    semid = semget(key, 5, IPC_CREAT | perms);
     if (semid == -1) {
         perror("semget"); 
         exit(EXIT_FAILURE);
     }
-    if (semctl(semid, FLAG_EDIT, SETVAL, 0) == -1) {
+    if (semctl(semid, active_writer, SETVAL, 0) == -1) {
         perror("semctl"); 
         exit(EXIT_FAILURE);
     }
-    if (semctl(semid, NUMB_OF_READERS, SETVAL, 0) == -1) {
+    if (semctl(semid, numb_of_readers, SETVAL, 0) == -1) {
         perror("semctl"); 
         exit(EXIT_FAILURE);
     }
-    if (semctl(semid, WRITERS_QUEUE, SETVAL, 0) == -1) {
+    if (semctl(semid, writers_queue, SETVAL, 0) == -1) {
         perror("semctl"); 
         exit(EXIT_FAILURE);
     }
-    if (semctl(semid, READERS_QUEUE, SETVAL, 0) == -1) {
+    if (semctl(semid, readers_queue, SETVAL, 0) == -1) {
+        perror("semctl"); 
+        exit(EXIT_FAILURE);
+    }
+    if (semctl(semid, bin_sem, SETVAL, 1) == -1) {
         perror("semctl"); 
         exit(EXIT_FAILURE);
     }
 
-    for (size_t i = 0; i < WRITERS_CNT; ++i) {
+    for (size_t i = 0; i < writers_cnt; ++i) {
         if ((cpid = fork()) == -1){
             perror("fork"); 
             exit(EXIT_FAILURE);
@@ -155,7 +158,7 @@ int main(int argc, char *argv[]) {
         else if (cpid == 0)
             writer(semid, buf);
     }
-    for (size_t i = 0; i < READERS_CNT; ++i) {
+    for (size_t i = 0; i < readers_cnt; ++i) {
         if ((cpid = fork()) == -1) {
             perror("ftok"); 
             exit(EXIT_FAILURE);
@@ -164,7 +167,7 @@ int main(int argc, char *argv[]) {
             reader(semid, buf);
     }
 
-    for (size_t i = 0; i < WRITERS_CNT + READERS_CNT; ++i) {
+    for (size_t i = 0; i < writers_cnt + readers_cnt; ++i) {
         w = waitpid(-1, &wstatus, WUNTRACED | WCONTINUED); // until one of its children terminates (ANY child process.)
         if (w == -1) {
             char err_msg[100];

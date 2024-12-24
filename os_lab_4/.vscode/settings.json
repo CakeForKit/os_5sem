@@ -1,7 +1,12 @@
 {
     "files.associations": {
         "svshm_string.h": "c",
-        "cerrno": "c"
+        "cerrno": "c",
+        "shm.h": "c",
+        "array": "c",
+        "sem.h": "c",
+        "stat.h": "c",
+        "unistd.h": "c"
     },
     "C_Cpp.errorSquiggles": "disabled"
 }
