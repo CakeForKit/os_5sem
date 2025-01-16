@@ -4,6 +4,11 @@
         "calculator.h": "c",
         "bakery.h": "c",
         "numbers": "c",
-        "sem.h": "c"
+        "sem.h": "c",
+        "random": "c",
+        "pc.h": "c",
+        "pthread.h": "c",
+        "functional": "c",
+        "stat.h": "c"
     }
 }

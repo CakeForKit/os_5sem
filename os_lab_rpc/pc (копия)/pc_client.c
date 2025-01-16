@@ -29,26 +29,24 @@ pc_prog_1(char *host, char type)
 	if (type == 'p') {
 		producer_1_arg = getpid();
 		while (1) {
-			sleep(rand() % max_time_sleep + 4);
+			sleep(rand() % max_time_sleep + 1);
 			retval_1 = producer_1(&producer_1_arg, &result_1, clnt);
 			if (retval_1 != RPC_SUCCESS) {
 				char * es = clnt_sperrno(retval_1);
 				printf("%s\n", es);
-				clnt_perror (clnt, "call failed");
-				break;
+				// clnt_perror (clnt, "call failed");
 			}
 			printf("Производитель PID=%d положил '%c'\n", getpid(), result_1);
 		}
 	} else if (type == 'c') {
 		consumer_1_arg = getpid();
 		while (1) {
-			sleep(rand() % max_time_sleep + 4);
+			sleep(rand() % max_time_sleep + 1);
 			retval_2 = consumer_1(&consumer_1_arg, &result_2, clnt);
 			if (retval_2 != RPC_SUCCESS) {
 				char * es = clnt_sperrno(retval_2);
 				printf("%s\n", es);
-				clnt_perror (clnt, "call failed");
-				break;
+				// clnt_perror (clnt, "call failed");
 			}
 			printf("Потребитель   PID=%d взял    '%c'\n", getpid(), result_2);
 		}

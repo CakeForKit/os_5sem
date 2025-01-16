@@ -15,9 +15,7 @@ extern "C" {
 #endif
 
 #include <unistd.h>
-#define SIZE_BUF 10
-int init_sem(const char *fn);
-int free_sem();
+#define SIZE_BUF 1000
 
 #define PC_PROG 0x20000001
 #define PC_VER 1

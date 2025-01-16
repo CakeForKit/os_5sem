@@ -11,10 +11,20 @@
 #include <memory.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
+#include <sys/sem.h>
+#include <sys/stat.h>
 
 #ifndef SIG_PF
 #define SIG_PF void(*)(int)
 #endif
+#define BINARY 0
+#define BEMPTY 1
+#define BFULL 2
+struct sembuf start_prod[2] = {{BEMPTY, -1, SEM_UNDO}, {BINARY, -1, SEM_UNDO}};
+struct sembuf stop_prod[2] = {{BINARY, 1, SEM_UNDO}, {BFULL, 1, SEM_UNDO}};
+struct sembuf start_cons[2] = {{BFULL, -1, SEM_UNDO}, {BINARY, -1, SEM_UNDO}};
+struct sembuf stop_cons[2] = {{BINARY, 1, SEM_UNDO}, {BEMPTY, 1, SEM_UNDO}};
+int semid;
 pthread_t p_thread;
 pthread_attr_t attr;
 
@@ -23,59 +33,71 @@ void *serv_request(void *data) {
     {
         struct svc_req *rqstp;
         SVCXPRT *transp;
-		int arg;
     } *ptr_data;
     union {
-        int producer_1_arg;
-        int consumer_1_arg;
-    } argument;
+		int fill;
+	} argument;
     union {
         char producer_1_res;
         char consumer_1_res;
     } result;
 	bool_t retval;
     xdrproc_t _xdr_argument, _xdr_result;
-	(void) _xdr_argument;
-    bool_t(*local)(int *, char *, struct svc_req *);
+    bool_t(*local)(char *, void *, struct svc_req *);
     ptr_data = (struct thr_data  *)data;
     struct svc_req *rqstp = ptr_data->rqstp;
     register SVCXPRT *transp = ptr_data->transp;
-	argument.producer_1_arg = ptr_data->arg;
 	switch (rqstp->rq_proc) {
 	case NULLPROC:
 		(void) svc_sendreply (transp, (xdrproc_t) xdr_void, (char *)NULL);
 		return NULL;
 	case PRODUCER:
-		// _xdr_argument = (xdrproc_t) xdr_int;
+		_xdr_argument = (xdrproc_t) xdr_int;
 		_xdr_result = (xdrproc_t) xdr_char;
-		local = (bool_t (*) (int *, char *,  struct svc_req *))producer_1_svc;
+		local = (bool_t (*) (char *, void *,  struct svc_req *))producer_1_svc;
 		break;
 	case CONSUMER:
-		// _xdr_argument = (xdrproc_t) xdr_int;
+		_xdr_argument = (xdrproc_t) xdr_int;
 		_xdr_result = (xdrproc_t) xdr_char;
-		local = (bool_t (*) (int *, char *,  struct svc_req *))consumer_1_svc;
+		local = (bool_t (*) (char *, void *,  struct svc_req *))consumer_1_svc;
 		break;
 	default:
 		svcerr_noproc (transp);
 		return NULL;
 	}
-	// memset ((char *)&argument, 0, sizeof (argument));
-	// if (!svc_getargs (transp, (xdrproc_t) _xdr_argument, (caddr_t) &argument)) {
-	// 	svcerr_decode (transp);
-	// 	return NULL;
-	// }
+	memset ((char *)&argument, 0, sizeof (argument));
+	if (!svc_getargs (transp, (xdrproc_t) _xdr_argument, (caddr_t) &argument)) {
+		svcerr_decode (transp);
+		return NULL;
+	}
 	if (rqstp->rq_proc == PRODUCER) {
-        retval = (bool_t) (*local)((int *)&argument, (char *)&result, rqstp);
+		if (semop(semid, start_prod, 2) == -1) {
+            perror("semop");
+            exit(1);
+        }
+        retval = (bool_t) (*local)((char *)&argument, (void *)&result, rqstp);
+        if (semop(semid, stop_prod, 2) == -1) {
+            perror("semop");
+            exit(1);
+        }
 	} else {
-        retval = (bool_t) (*local)((int *)&argument, (char *)&result, rqstp);
+		if (semop(semid, start_cons, 2) == -1) {
+            perror("start consume semop");
+            exit(1);
+        }
+        retval = (bool_t) (*local)((char *)&argument, (void *)&result, rqstp);
+        if (semop(semid, stop_cons, 2) == -1) {
+            perror("stop consume semop");
+            exit(1);
+        }
 	}
 	if (retval > 0 && !svc_sendreply(transp, (xdrproc_t) _xdr_result, (char *)&result)) {
 		svcerr_systemerr (transp);
 	}
-	// if (!svc_freeargs (transp, (xdrproc_t) _xdr_argument, (caddr_t) &argument)) {
-	// 	fprintf (stderr, "%s", "unable to free arguments");
-	// 	exit (1);
-	// }
+	if (!svc_freeargs (transp, (xdrproc_t) _xdr_argument, (caddr_t) &argument)) {
+		fprintf (stderr, "%s", "unable to free arguments");
+		exit (1);
+	}
 	if (!pc_prog_1_freeresult (transp, _xdr_result, (caddr_t) &result))
 		fprintf (stderr, "%s", "unable to free results");
 	return NULL;
@@ -88,36 +110,44 @@ pc_prog_1(struct svc_req *rqstp, register SVCXPRT *transp)
 	{
 		struct svc_req *rqstp;
 		SVCXPRT *transp;
-		int arg;
 	} *data_ptr=(struct data_str*)malloc(sizeof(struct data_str));
 	data_ptr->rqstp = rqstp;
 	data_ptr->transp = transp;
-
-	union {
-        int producer_1_arg;
-        int consumer_1_arg;
-    } argument;
-	xdrproc_t _xdr_argument = (xdrproc_t) xdr_int;
-	memset ((char *)&argument, 0, sizeof (argument));
-	if (!svc_getargs (transp, (xdrproc_t) _xdr_argument, (caddr_t) &argument)) {
-		svcerr_decode (transp);
-		return;
-	}
-	data_ptr->arg = argument.consumer_1_arg;
 	pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
 	pthread_create(&p_thread, &attr, serv_request, (void *)data_ptr);
+
 }
 
 int
 main (int argc, char **argv)
 {
 	register SVCXPRT *transp;
-	int rc = init_sem(argv[0]);
-	if (rc == -1) {
-		fprintf (stderr, "init_sem");
-		exit(1);
+	int perms = S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH;
+	key_t key;
+	key = ftok(argv[0], 1);
+    if (key == -1){
+		perror("ftok"); 
+        exit(1);
 	}
+	semid = semget(key, 3, IPC_CREAT | perms);
+	if (semid == -1) {
+        perror("semget"); 
+        exit(1);
+    }
+    if (semctl(semid, BINARY, SETVAL, 1) == -1) {
+        perror("semctl"); 
+        exit(1);
+    }
+    if (semctl(semid, BEMPTY, SETVAL, SIZE_BUF) == -1) {
+        perror("semctl"); 
+        exit(1);
+    }
+    if (semctl(semid, BFULL, SETVAL, 0) == -1) {
+        perror("semctl"); 
+        exit(1);
+    }
 	pmap_unset (PC_PROG, PC_VER);
+
 	transp = svcudp_create(RPC_ANYSOCK);
 	if (transp == NULL) {
 		fprintf (stderr, "%s", "cannot create udp service.");
@@ -140,7 +170,10 @@ main (int argc, char **argv)
 
 	svc_run ();
 	fprintf (stderr, "%s", "svc_run returned");
-	free_sem();
+	if (semctl(semid, 0, IPC_RMID) == -1) {
+        perror("semctl"); 
+        exit(1);
+    }
 	exit (1);
 	/* NOTREACHED */
 }

@@ -8,38 +8,25 @@
 #include <sys/sem.h>
 #include <sys/stat.h>
 
-#define binary 0
-#define bempty 1
-#define bfull 2
-struct sembuf start_prod[2] = {{bempty, -1, SEM_UNDO}, {binary, -1, SEM_UNDO}};
-struct sembuf end_prod[2] = {{binary, 1, SEM_UNDO}, {bfull, 1, SEM_UNDO}};
-struct sembuf start_cons[2] = {{bfull, -1, SEM_UNDO}, {binary, -1, SEM_UNDO}};
-struct sembuf stop_cons[2] = {{binary, 1, SEM_UNDO}, {bempty, 1, SEM_UNDO}};
-
-#define size_buf 1000
-char *buf, *cons_ptr, *prod_ptr, alpha;
+#define BINARY 0
+#define BEMPTY 1
+#define BFULL 2
+struct sembuf start_prod[2] = {{BEMPTY, -1, 0}, {BINARY, -1, 0}};
+struct sembuf stop_prod[2] = {{BINARY, 1, 0}, {BFULL, 1, 0}};
+struct sembuf start_cons[2] = {{BFULL, -1, 0}, {BINARY, -1, 0}};
+struct sembuf stop_cons[2] = {{BINARY, 1, 0}, {BEMPTY, 1, 0}};
 int semid;
 
-bool_t
-consumer_1_svc(void *argp, char *result, struct svc_req *rqstp)
-{
-	if (semop(semid, start_cons, 2) == -1) {
-		perror("semop");
-		exit(1);
-	}
-	*result = *cons_ptr;
-	cons_ptr++;
-	if (cons_ptr - buf == size_buf)
-		cons_ptr = buf;
-	if (semop(semid, stop_cons, 2) == -1) {
-		perror("semop");
-		exit(1);
-	}
-	return TRUE;
-}
+// char buffer[SIZE_BUF];
+// char *prod_ptr = buffer;
+// char *cons_ptr = buffer;
+char *buffer;
+char *prod_ptr;
+char *cons_ptr;
+char alpha = 'a';
 
 bool_t
-producer_1_svc(void *argp, char *result, struct svc_req *rqstp)
+producer_1_svc(int *argp, char *result, struct svc_req *rqstp)
 {
 	if (semop(semid, start_prod, 2) == -1) {
 		perror("semop");
@@ -47,15 +34,44 @@ producer_1_svc(void *argp, char *result, struct svc_req *rqstp)
 	}
 	*prod_ptr = alpha;
 	*result = alpha;
+	printf("Производитель PID=%d положил '%c' ", *argp, *result);
+	for (char *cur = buffer; cur < buffer + SIZE_BUF; ++cur) {
+		printf("%c", *cur);
+	}
+	printf("\n");
+    prod_ptr++;
+	if (prod_ptr == buffer + SIZE_BUF)
+		prod_ptr = buffer;
 	if (alpha == 'z')
 		alpha = 'a';
 	else
 		alpha++;
-	prod_ptr++;
-	if (prod_ptr - buf == size_buf)
-		prod_ptr = buf;
-	if (semop(semid, end_prod, 2) == -1) {
+	if (semop(semid, stop_prod, 2) == -1) {
 		perror("semop");
+		exit(1);
+	}
+	return TRUE;
+}
+
+bool_t
+consumer_1_svc(int *argp, char *result, struct svc_req *rqstp)
+{
+	if (semop(semid, start_cons, 2) == -1) {
+		perror("start consume semop");
+		exit(1);
+	}
+	*result = *cons_ptr;
+	printf("Потребитель PID=%d взял '%c'      ", *argp, *result);
+	*cons_ptr = '-';
+	for (char *cur = buffer; cur < buffer + SIZE_BUF; ++cur) {
+		printf("%c", *cur);
+	}
+	printf("\n");
+    cons_ptr++;
+	if (cons_ptr == buffer + SIZE_BUF)
+		cons_ptr = buffer;
+	if (semop(semid, stop_cons, 2) == -1) {
+		perror("stop consume semop");
 		exit(1);
 	}
 	return TRUE;
@@ -73,33 +89,49 @@ pc_prog_1_freeresult (SVCXPRT *transp, xdrproc_t xdr_result, caddr_t result)
 	return 1;
 }
 
-int pc_init() {
-	buf = malloc(sizeof(char) * size_buf);
-	if (buf == NULL) {
-		perror('malloc');
-		return -1;
-	}
-	cons_ptr = buf;
-	prod_ptr = buf;
-	alpha = 'a';
-
+int init_sem(const char *fn) {
 	int perms = S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH;
-    semid = semget(IPC_PRIVATE, 3, IPC_CREAT | perms);
-    if (semid == -1) {
-		perror("semget");
+	key_t key;
+	key = ftok(fn, 1);
+    if (key == -1){
+        perror("ftok"); 
+        return -1;
+    }
+	semid = semget(key, 3, IPC_CREAT | perms);
+	if (semid == -1) {
+        perror("semget"); 
+        return -1;
+    }
+    if (semctl(semid, BINARY, SETVAL, 1) == -1) {
+        perror("semctl"); 
+        return -1;
+    }
+    if (semctl(semid, BEMPTY, SETVAL, SIZE_BUF) == -1) {
+        perror("semctl"); 
+        return -1;
+    }
+    if (semctl(semid, BFULL, SETVAL, 0) == -1) {
+        perror("semctl"); 
+        return -1;
+    }
+	buffer = calloc(SIZE_BUF, sizeof(char));
+	if (buffer == NULL) {
+		perror("calloc");
 		return -1;
 	}
-	if (semctl(semid, binary, SETVAL, 1) == -1) {
+	for (char *cur = buffer; cur < buffer + SIZE_BUF; ++cur) {
+		*cur = '-';
+	}
+	prod_ptr = buffer;
+	cons_ptr = buffer;
+	return 0;
+}
+
+int free_sem() {
+	if (semctl(semid, 0, IPC_RMID) == -1) {
         perror("semctl"); 
         return -1;
     }
-    if (semctl(semid, bempty, SETVAL, size_buf) == -1) {
-        perror("semctl"); 
-        return -1;
-    }
-    if (semctl(semid, bfull, SETVAL, 0) == -1) {
-        perror("semctl"); 
-        return -1;
-    }
+	free(buffer);
 	return 0;
 }

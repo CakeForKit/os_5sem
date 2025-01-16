@@ -21,8 +21,8 @@ OBJECTS_SVC = $(SOURCES_SVC.c:%.c=%.o) $(TARGETS_SVC.c:%.c=%.o)
 # Compiler flags 
 
 CPPFLAGS += -D_REENTRANT
-CFLAGS += -g3 -I/usr/include/tirpc
-LDLIBS += -lnsl -ltirpc -lpthread 
+CFLAGS += -g -I/usr/include/tirpc
+LDLIBS += -lnsl -lpthread -ltirpc
  RPCGENFLAGS = 
 
 # Targets 

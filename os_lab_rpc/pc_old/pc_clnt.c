@@ -7,22 +7,22 @@
 #include "pc.h"
 
 /* Default timeout can be changed using clnt_control() */
-static struct timeval TIMEOUT = { 120, 0 };
+static struct timeval TIMEOUT = { 25, 0 };
 
 enum clnt_stat 
-producer_1(int *argp, char *clnt_res, CLIENT *clnt)
+consumer_1(void *argp, char *clnt_res, CLIENT *clnt)
 {
-	return (clnt_call(clnt, PRODUCER,
-		(xdrproc_t) xdr_int, (caddr_t) argp,
+	return (clnt_call(clnt, consumer,
+		(xdrproc_t) xdr_void, (caddr_t) argp,
 		(xdrproc_t) xdr_char, (caddr_t) clnt_res,
 		TIMEOUT));
 }
 
 enum clnt_stat 
-consumer_1(int *argp, char *clnt_res, CLIENT *clnt)
+producer_1(void *argp, char *clnt_res, CLIENT *clnt)
 {
-	return (clnt_call(clnt, CONSUMER,
-		(xdrproc_t) xdr_int, (caddr_t) argp,
+	return (clnt_call(clnt, producer,
+		(xdrproc_t) xdr_void, (caddr_t) argp,
 		(xdrproc_t) xdr_char, (caddr_t) clnt_res,
 		TIMEOUT));
 }

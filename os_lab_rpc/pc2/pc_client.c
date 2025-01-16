@@ -5,7 +5,7 @@
  */
 
 #include "pc.h"
-#define max_time_sleep 4
+#define max_time_sleep 2
 
 void
 pc_prog_1(char *host, char type)
@@ -13,10 +13,10 @@ pc_prog_1(char *host, char type)
 	CLIENT *clnt;
 	enum clnt_stat retval_1;
 	char result_1;
-	int  producer_1_arg;
+	char *producer_1_arg = NULL;
 	enum clnt_stat retval_2;
 	char result_2;
-	int  consumer_1_arg;
+	char *consumer_1_arg = NULL;
 
 #ifndef	DEBUG
 	clnt = clnt_create (host, PC_PROG, PC_VER, "udp");
@@ -27,32 +27,23 @@ pc_prog_1(char *host, char type)
 #endif	/* DEBUG */
 	srand(time(NULL));
 	if (type == 'p') {
-		producer_1_arg = getpid();
 		while (1) {
-			sleep(rand() % max_time_sleep + 4);
-			retval_1 = producer_1(&producer_1_arg, &result_1, clnt);
+			sleep(rand() % max_time_sleep + 1);
+			retval_1 = producer_1((void*)&producer_1_arg, &result_1, clnt);
 			if (retval_1 != RPC_SUCCESS) {
-				char * es = clnt_sperrno(retval_1);
-				printf("%s\n", es);
 				clnt_perror (clnt, "call failed");
-				break;
 			}
-			printf("Производитель PID=%d положил '%c'\n", getpid(), result_1);
+			printf("Производитель положил '%c'\n", result_1);
 		}
 	} else if (type == 'c') {
-		consumer_1_arg = getpid();
 		while (1) {
-			sleep(rand() % max_time_sleep + 4);
-			retval_2 = consumer_1(&consumer_1_arg, &result_2, clnt);
+			sleep(rand() % max_time_sleep + 1);
+			retval_2 = consumer_1((void*)&consumer_1_arg, &result_2, clnt);
 			if (retval_2 != RPC_SUCCESS) {
-				char * es = clnt_sperrno(retval_2);
-				printf("%s\n", es);
 				clnt_perror (clnt, "call failed");
-				break;
 			}
-			printf("Потребитель   PID=%d взял    '%c'\n", getpid(), result_2);
+			printf("Потребитель   взял    '%c'\n", result_2);
 		}
-
 	}
 #ifndef	DEBUG
 	clnt_destroy (clnt);
