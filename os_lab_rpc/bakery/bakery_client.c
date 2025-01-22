@@ -39,10 +39,10 @@ bakery_prog_1(char *host, int ind)
 
 	printf("PID=%d num=%d ind=%d\n", request.pid, request.num, request.ind);
 	usleep(350 *ind);
-	// retval_2 = serve_1(&request, &result_2, clnt);
-	// if (retval_2 != RPC_SUCCESS) {
-	// 	clnt_perror (clnt, "call failed");
-	// }
+	retval_2 = serve_1(&request, &result_2, clnt);
+	if (retval_2 != RPC_SUCCESS) {
+		clnt_perror (clnt, "call failed");
+	}
 #ifndef	DEBUG
 	clnt_destroy (clnt);
 #endif	 /* DEBUG */
